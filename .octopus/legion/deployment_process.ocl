@@ -1,0 +1,188 @@
+step "deploy-database-changes" {
+    name = "Determine if client has customized scripts"
+
+    action {
+        action_type = "Octopus.Script"
+        is_disabled = true
+        properties = {
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                $packagePath = $OctopusParameters["Octopus.Action.Package[Legion.Database.Client].ExtractedPath"]
+                
+                $folders = Get-ChildItem $packagePath | Where-Object { $_.PsIsContainer -eq $true }
+                
+                foreach ($folder in $folders) {
+                  if ($folder.Name -eq "app") { continue }
+                  
+                  Set-OctopusVariable -name "Folders[$($folder.Name)]" -value "True"
+                }
+                
+                
+            EOT
+            Octopus.Action.Script.ScriptSource = "Inline"
+            Octopus.Action.Script.Syntax = "PowerShell"
+        }
+        worker_pool = "hosted-windows"
+
+        packages "Legion.Database.Client" {
+            acquisition_location = "Server"
+            feed = "octopus-server-built-in"
+            package_id = "Legion.Database.Client"
+            properties = {
+                Extract = "True"
+                Purpose = ""
+                SelectionMode = "immediate"
+            }
+        }
+    }
+}
+
+step "deploy-database-changes" {
+    name = "Deploy shared database changes"
+
+    action {
+        action_type = "Octopus.Script"
+        properties = {
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                $target = $OctopusParameters["Octopus.Machine.Name"]
+                $conn = $OctopusParameters["Legion.Database.ConnectionString"]
+                $packagePath = $OctopusParameters["Octopus.Action.Package[Legion.Database.Shared].ExtractedPath"]
+                
+                Write-Host "Updating database $target"
+                Write-Host "Connection string: $conn"
+                
+                $appPath = [IO.Path]::Combine($packagePath, "app", "DbUpRunner.exe")
+                $scriptsPath = [IO.Path]::Combine($packagePath, "scripts")
+                
+                & "$appPath" "$conn" "$scriptsPath" "True"
+            EOT
+            Octopus.Action.Script.ScriptSource = "Inline"
+            Octopus.Action.Script.Syntax = "PowerShell"
+        }
+        worker_pool = "hosted-windows"
+
+        packages "Legion.Database.Shared" {
+            acquisition_location = "Server"
+            feed = "octopus-server-built-in"
+            package_id = "Legion.Database.Shared"
+            properties = {
+                Extract = "True"
+                Purpose = ""
+                SelectionMode = "immediate"
+            }
+        }
+    }
+}
+
+step "deploy-database-changes" {
+    name = "Deploy core client database changes"
+    properties = {
+        Octopus.Action.TargetRoles = "database"
+    }
+
+    action {
+        action_type = "Octopus.Script"
+        properties = {
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                $target = $OctopusParameters["Octopus.Machine.Name"]
+                $conn = $OctopusParameters["Legion.Database.ConnectionString"]
+                $packagePath = $OctopusParameters["Octopus.Action.Package[Legion.Database.Core].ExtractedPath"]
+                
+                Write-Host "Updating database $target"
+                Write-Host "Connection string: $conn"
+                
+                $appPath = [IO.Path]::Combine($packagePath, "app", "DbUpRunner.exe")
+                $scriptsPath = [IO.Path]::Combine($packagePath, "scripts")
+                
+                & "$appPath" "$conn" "$scriptsPath" "True"
+            EOT
+            Octopus.Action.Script.ScriptSource = "Inline"
+            Octopus.Action.Script.Syntax = "PowerShell"
+        }
+        worker_pool = "hosted-windows"
+
+        packages "Legion.Database.Core" {
+            acquisition_location = "Server"
+            feed = "octopus-server-built-in"
+            package_id = "Legion.Database.Core"
+            properties = {
+                Extract = "True"
+                Purpose = ""
+                SelectionMode = "immediate"
+            }
+        }
+    }
+}
+
+step "deploy-database-changes" {
+    name = "Deploy client specific database changes"
+    properties = {
+        Octopus.Action.TargetRoles = "custom-client-scripts"
+    }
+
+    action {
+        action_type = "Octopus.Script"
+        properties = {
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                $target = $OctopusParameters["Octopus.Machine.Name"]
+                $conn = $OctopusParameters["Legion.Database.ConnectionString"]
+                $packagePath = $OctopusParameters["Octopus.Action.Package[Legion.Database.Client].ExtractedPath"]
+                $scriptsFolder = $OctopusParameters["Legion.Client.ScriptsFolder"]
+                
+                Write-Host "Updating database $target"
+                Write-Host "Connection string: $conn"
+                
+                $appPath = [IO.Path]::Combine($packagePath, "app", "DbUpRunner.exe")
+                $scriptsPath = [IO.Path]::Combine($packagePath, $scriptsFolder)
+                
+                if (Test-Path $scriptsPath) {
+                	& "$appPath" "$conn" "$scriptsPath" "False"
+                } else {
+                	Write-Host "Scripts folder '$scriptsFolder' does not exist for this client."
+                }
+            EOT
+            Octopus.Action.Script.ScriptSource = "Inline"
+            Octopus.Action.Script.Syntax = "PowerShell"
+        }
+        worker_pool = "hosted-windows"
+
+        packages "Legion.Database.Client" {
+            acquisition_location = "Server"
+            feed = "octopus-server-built-in"
+            package_id = "Legion.Database.Client"
+            properties = {
+                Extract = "True"
+                Purpose = ""
+                SelectionMode = "immediate"
+            }
+        }
+    }
+}
+
+step "deploy-a-package" {
+    name = "Deploy web app"
+    properties = {
+        Octopus.Action.TargetRoles = "legion-web"
+    }
+
+    action {
+        action_type = "Octopus.TentaclePackage"
+        properties = {
+            Octopus.Action.EnabledFeatures = ",Octopus.Features.ConfigurationTransforms,Octopus.Features.ConfigurationVariables"
+            Octopus.Action.Package.AutomaticallyRunConfigurationTransformationFiles = "True"
+            Octopus.Action.Package.AutomaticallyUpdateAppSettingsAndConnectionStrings = "True"
+            Octopus.Action.Package.DownloadOnTentacle = "False"
+            Octopus.Action.Package.FeedId = "octopus-server-built-in"
+            Octopus.Action.Package.PackageId = "Legion.Web"
+        }
+        worker_pool_variable = ""
+
+        packages {
+            acquisition_location = "Server"
+            feed = "octopus-server-built-in"
+            package_id = "Legion.Web"
+            properties = {
+                SelectionMode = "immediate"
+            }
+        }
+    }
+}
